@@ -40,7 +40,7 @@ def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
             message = 'OK!'
         if status == 201:
             message = 'Created!'
-    elif status in (304):
+    elif status in (304,):
         responseType = 'Warning'
         message = 'Not modified!'
     else:
@@ -253,45 +253,33 @@ def get_file(askedFilePath=''):
             else:
                 return send_from_directory(directory='/data/static', filename=askedFilePath)
         else:
-            return jsonHTTPResponse(status=404, dbg=request.args.get('dbg', False))
+            return jsonHTTPResponse(status=404)
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
+@app.route('/files', methods=['DELETE'])
 @app.route('/files/<path:askedFilePath>', methods=['DELETE'])
 def delete_file(askedFilePath=''):
-    fileRealPath = os.path.join('/data/static', askedFilePath)
-    isDirectory = os.path.isdir(fileRealPath)
-    if isDirectory:
-        #files = []
-        #for filename in os.listdir(fileRealPath):
-        #    filePath = os.path.join(fileRealPath, filename)
-        #    metadata = {
-        #        "name": filename,
-        #        "path": filePath,
-        #        "type": ('directory' if os.path.isdir(filePath) else magic.from_file(filePath, mime=True)),
-        #        "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, filename), _external=True),
-        #        "size": (fileSize(os.stat(filePath).st_size) if os.path.isfile(filePath) else '-'),
-        #        "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
-        #        "last_modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
-        #    }
-        #    files.append(metadata)
-        response = jsonHTTPResponse(status=200, givenMessage='Directory delete successful!')
-        #response = Response(
-            #response=json.dumps(files),
-            #response="Directory delete successful!",
-            #status=200,
-            #mimetype='application/json'
-        #)
-        return response
-    else:
-        response = jsonHTTPResponse(status=200, givenMessage='Regular file delete successful!')
-        #response = Response(
-            #response=json.dumps(files),
-            #response="Regular file delete successful!",
-            #status=200,
-            #mimetype='application/json'
-        #)
-        return response
+    try:
+        fileRealPath = os.path.join('/data/static', askedFilePath)
+        if os.path.exists(fileRealPath):
+            isDirectory = os.path.isdir(fileRealPath)
+            if isDirectory:
+                if askedFilePath:
+                    return jsonHTTPResponse(status=200, givenMessage='Directory delete successful!')
+                else:
+                    return jsonHTTPResponse(status=403, givenMessage='Root directory cannot be deleted!')
+            else:
+                try:
+                    os.remove(fileRealPath)
+                    fileName = askedFilePath.split('/')[-1:][0]
+                    return jsonHTTPResponse(status=200, givenMessage="File '%s' delete successful!" % (fileName))
+                except Exception:
+                    return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+        else:
+            return jsonHTTPResponse(status=404)
+    except Exception:
+        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
 @app.route('/files/', methods=['PUT'])
 @app.route('/files/<path:askedFilePath>', methods=['PUT'])
