@@ -1,4 +1,4 @@
-import os, magic, traceback, math, pathlib
+import os, magic, traceback, math, pathlib, shutil
 from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
 from datetime import datetime
 from urllib.parse import urljoin
@@ -11,10 +11,8 @@ app = Flask(__name__)
 def getFileSize(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
         if abs(num) < 1024.0:
-            # return {'number': "%3.1f" % (num), 'suffix': "%s%s" % (unit, suffix)}
             return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (unit, suffix)}
         num /= 1024.0
-    # return {'number': "%.1f" % (num), 'suffix': "%s%s" % (num, 'Yi', suffix)}
     return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
 
 #  Генерация ответа сервера при ошибке
@@ -266,7 +264,24 @@ def delete_file(askedFilePath=''):
             isDirectory = os.path.isdir(fileRealPath)
             if isDirectory:
                 if askedFilePath:
-                    return jsonHTTPResponse(status=200, givenMessage='Directory delete successful!')
+                    recursive = request.args.get('recursive', False)
+                    givenMessage = ''
+                    if not isinstance(recursive, bool):
+                        try:
+                            recursive = strtobool(recursive)
+                        except Exception:
+                            recursive = False
+                            givenMessage += "Value of parameter 'recursive' is incorrect and set as FALSE by default. "
+                    if recursive:
+                        givenMessage += 'Directory delete recursively (with all contents)!'
+                        shutil.rmtree(fileRealPath)
+                    else:
+                        try:
+                            os.rmdir(fileRealPath)
+                            givenMessage += 'Directory delete successful!'
+                        except Exception:
+                            return jsonHTTPResponse(dbg=request.args.get('dbg', False), givenMessage="Directory not empty! Check directory and delete content manually or set 'recursive' parameter to true if you want delete directory with all its content.")
+                    return jsonHTTPResponse(status=200, givenMessage=givenMessage)
                 else:
                     return jsonHTTPResponse(status=403, givenMessage='Root directory cannot be deleted!')
             else:
