@@ -296,15 +296,23 @@ def delete_file(askedFilePath=''):
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
-@app.route('/files/', methods=['PUT'])
-@app.route('/files/<path:askedFilePath>', methods=['PUT'])
-def put_file(askedFilePath=''):
-    return "PUT ok!"
-
 @app.route('/files/', methods=['POST'])
 @app.route('/files/<path:askedFilePath>', methods=['POST'])
 def post_file(askedFilePath=''):
-    return "POST ok!"
+    try:
+        fileRealPath = os.path.join('/data/static', askedFilePath)
+        givenMessage = ''
+        if not os.path.exists(fileRealPath):
+            os.makedirs(fileRealPath)
+        uploads = request.files.getlist('uploads')
+        if uploads:
+            givenMessage += "Files uploaded!"
+        else:
+            givenMessage += "You don`t send file!"
+        fileName = 'test'
+        return jsonHTTPResponse(status=200, givenMessage=givenMessage)
+    except Exception:
+        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
