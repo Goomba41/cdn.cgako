@@ -1,4 +1,4 @@
-import os, magic, traceback, math, pathlib, shutil, uuid
+import os, magic, traceback, math, pathlib, shutil, uuid, subprocess
 from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
 from datetime import datetime
 from urllib.parse import urljoin
@@ -183,7 +183,7 @@ def get_file(askedFilePath=''):
                     parentDirectory = 'This is root directory!'
                 for filename in os.listdir(fileRealPath):
                     filePath = os.path.join(fileRealPath, filename)
-                    fileSizeBytes = os.stat(filePath).st_size
+                    fileSizeBytes = int(subprocess.check_output("du -sb %s | cut -f1" % (filePath), shell=True)) if os.path.isdir(filePath) else os.stat(filePath).st_size
                     fileSize = getFileSize(fileSizeBytes)
 
                     metadata = {
