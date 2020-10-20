@@ -1,13 +1,14 @@
-import os, magic, traceback, math, pathlib, shutil
+import os, magic, traceback, math, pathlib, shutil, uuid
 from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
 from datetime import datetime
 from urllib.parse import urljoin
 from distutils.util import strtobool
 from operator import itemgetter, attrgetter
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-#Определение размера файла
+# Определение размера файла
 def getFileSize(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
         if abs(num) < 1024.0:
@@ -15,7 +16,7 @@ def getFileSize(num, suffix='B'):
         num /= 1024.0
     return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
 
-#  Генерация ответа сервера при ошибке
+# Генерация ответа сервера при ошибке
 def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
     """Вывод серверной ошибки с трейсом. Параметр dbg отвечает за вывод
     в формате traceback."""
@@ -65,7 +66,7 @@ def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
         mimetype='application/json'
     )
 
-#  Пагинация получаемого с API списка
+# Пагинация получаемого с API списка
 def pagination_of_list(query_result, url, queryParams):
     """ Пагинация результатов запроса. Принимает параметры:
     результат запроса (json), URL API для генерации ссылок, стартовая позиция,
@@ -138,13 +139,17 @@ def pagination_of_list(query_result, url, queryParams):
 
 #----------------------------------------------------------------------
 
+# Фавиконка
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(directory=pathlib.Path().absolute(), filename='faviconDev.ico')
 
-@app.route('/')
+# Редирект с корня на список файлов
+@app.route('/', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def hello():
     return redirect(url_for('get_file', _external=True))
+
+#----------------------------------------------------------------------
 
 @app.route('/files', methods=['GET'])
 @app.route('/files/<path:askedFilePath>', methods=['GET'])
@@ -296,21 +301,108 @@ def delete_file(askedFilePath=''):
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
-@app.route('/files/', methods=['POST'])
+@app.route('/files', methods=['POST'])
 @app.route('/files/<path:askedFilePath>', methods=['POST'])
 def post_file(askedFilePath=''):
     try:
-        fileRealPath = os.path.join('/data/static', askedFilePath)
-        givenMessage = ''
-        if not os.path.exists(fileRealPath):
-            os.makedirs(fileRealPath)
         uploads = request.files.getlist('uploads')
+
         if uploads:
-            givenMessage += "Files uploaded!"
+
+            fileRealPath = os.path.join('/data/static', askedFilePath)
+
+            definedFilesNames = request.args.get('names', None)
+
+            if not os.path.exists(fileRealPath):
+                os.makedirs(fileRealPath)
+
+            uploadedFilesList = []
+
+            if definedFilesNames:
+                definedFilesNames = definedFilesNames.split(' ')
+                for newFileName in definedFilesNames:
+
+                    oldFileName = uploads[0].filename
+                    oldFileExt = oldFileName.split(".")[-1]
+                    newFullFileName = secure_filename(newFileName+ '.' + oldFileExt)
+
+                    filePath = os.path.join(fileRealPath, newFullFileName)
+                    uploads[0].save(filePath)
+                    uploads.pop(0)
+
+                    fileSizeBytes = os.stat(filePath).st_size
+                    fileSize = getFileSize(fileSizeBytes)
+
+                    metadata = {
+                        "name": newFullFileName,
+                        "oldName": oldFileName,
+                        "path": filePath,
+                        "type": magic.from_file(filePath, mime=True),
+                        "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, newFullFileName), _external=True),
+                        "sizeBytes": fileSizeBytes,
+                        "sizeNumber": fileSize['number'],
+                        "sizeSuffix": fileSize['suffix'],
+                        "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
+                        "modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
+                    }
+
+                    uploadedFilesList.append(metadata)
+
+
+            for file in uploads:
+                oldFileName = file.filename
+                oldFileExt = oldFileName.split(".")[-1]
+                newFullFileName = secure_filename(uuid.uuid1().hex + '.' + oldFileExt)
+
+                filePath = os.path.join(fileRealPath, newFullFileName)
+                file.save(filePath)
+
+                fileSizeBytes = os.stat(filePath).st_size
+                fileSize = getFileSize(fileSizeBytes)
+
+                metadata = {
+                    "name": newFullFileName,
+                    "oldName": oldFileName,
+                    "path": filePath,
+                    "type": magic.from_file(filePath, mime=True),
+                    "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, newFullFileName), _external=True),
+                    "sizeBytes": fileSizeBytes,
+                    "sizeNumber": fileSize['number'],
+                    "sizeSuffix": fileSize['suffix'],
+                    "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
+                    "modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
+                }
+
+                uploadedFilesList.append(metadata)
+
+            parentDirectory = url_for('.get_file', askedFilePath=askedFilePath if askedFilePath else None, _external=True)  
+            
+            return Response(
+                response=json.dumps({'uploadedIn': parentDirectory, 'uploadedFiles': uploadedFilesList, 'responseType': 'Success', 'status': 200, 'message': 'Files upload successful!'}),
+                status=200,
+                mimetype='application/json'
+            )
         else:
-            givenMessage += "You don`t send file!"
-        fileName = 'test'
-        return jsonHTTPResponse(status=200, givenMessage=givenMessage)
+            return jsonHTTPResponse(status=400, givenMessage="You don`t send file! Request ignored!")
+    except Exception:
+        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+
+@app.route('/files', methods=['PUT'])
+@app.route('/files/<path:askedFilePath>', methods=['PUT'])
+def put_file(askedFilePath=''):
+    try:
+        fileRealPath = os.path.join('/data/static', askedFilePath)
+        if os.path.exists(fileRealPath):
+            isDirectory = os.path.isdir(fileRealPath)
+            if isDirectory:
+                if askedFilePath:
+                    return jsonHTTPResponse(status=200, givenMessage="Directory renamed!", dbg=request.args.get('dbg', False))
+                else:
+                    return jsonHTTPResponse(status=400, givenMessage="Root directory cannot be renamed!", dbg=request.args.get('dbg', False))
+            else:
+                return jsonHTTPResponse(status=200, givenMessage="File renamed!", dbg=request.args.get('dbg', False))
+        else:
+            return jsonHTTPResponse(status=404)
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
