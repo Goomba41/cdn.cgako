@@ -383,7 +383,7 @@ def post_file(askedFilePath=''):
                 mimetype='application/json'
             )
         else:
-            return jsonHTTPResponse(status=400, givenMessage="You don`t send file! Request ignored!")
+            return jsonHTTPResponse(status=400, givenMessage="You didn`t send file! Request ignored!")
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
@@ -392,17 +392,32 @@ def post_file(askedFilePath=''):
 def put_file(askedFilePath=''):
     try:
         fileRealPath = os.path.join('/data/static', askedFilePath)
-        if os.path.exists(fileRealPath):
-            isDirectory = os.path.isdir(fileRealPath)
-            if isDirectory:
-                if askedFilePath:
-                    return jsonHTTPResponse(status=200, givenMessage="Directory renamed!", dbg=request.args.get('dbg', False))
+        newObjectName = request.args.get('name', None)
+
+        if newObjectName:
+            if os.path.exists(fileRealPath):
+
+                realPathSplitted = fileRealPath.rsplit('/', maxsplit=1)
+                oldFileName = realPathSplitted[1]
+                fileSavePath = realPathSplitted[0]
+
+                isDirectory = os.path.isdir(fileRealPath)
+                if isDirectory:
+                    objectType = 'Directory'
+                    if not askedFilePath:
+                        return jsonHTTPResponse(status=400, givenMessage="Root directory cannot be renamed!", dbg=request.args.get('dbg', False))
                 else:
-                    return jsonHTTPResponse(status=400, givenMessage="Root directory cannot be renamed!", dbg=request.args.get('dbg', False))
+                    objectType = 'File'
+                    oldFileExt = oldFileName.split('.')[-1]
+                    newObjectName += '.' + oldFileExt
+ 
+                os.rename(fileRealPath, os.path.join(fileSavePath, newObjectName))
+
+                return jsonHTTPResponse(status=200, givenMessage="%s «%s» renamed to «%s» successfully!" % (objectType, oldFileName, newObjectName), dbg=request.args.get('dbg', False))
             else:
-                return jsonHTTPResponse(status=200, givenMessage="File renamed!", dbg=request.args.get('dbg', False))
+                return jsonHTTPResponse(status=404)
         else:
-            return jsonHTTPResponse(status=404)
+            return jsonHTTPResponse(status=400, givenMessage="You didn`t send a new name for file/directory! Request ignored!", dbg=request.args.get('dbg', False))
     except Exception:
         return jsonHTTPResponse(dbg=request.args.get('dbg', False))
 
