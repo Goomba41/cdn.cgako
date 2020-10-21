@@ -8,13 +8,44 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-# Определение размера файла
-def getFileSize(num, suffix='B'):
-    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
-        if abs(num) < 1024.0:
-            return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (unit, suffix)}
-        num /= 1024.0
-    return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
+#----------------------------------------------------------------------
+
+class fileSystemObject:
+
+    def __init__(self, path):
+        self.path = path
+        self.type = 'directory' if os.path.isdir(self.path) else magic.from_file(self.path, mime=True)
+        self.name = self.path.rsplit('/', maxsplit=1)[-1]
+        self.link = url_for('.get_file', askedFilePath=os.path.join('/'.join(self.path.split('/')[3:][:-1]), self.name), _external=True)
+        self.sizeBytes = int(subprocess.check_output("du -sb %s | cut -f1" % (self.path), shell=True)) if os.path.isdir(self.path) else os.stat(self.path).st_size
+        self.sizeFormatted = self.getFileSize(self.sizeBytes)
+        self.created = str(datetime.fromtimestamp(int(os.stat(self.path).st_ctime)))
+        self.modified = str(datetime.fromtimestamp(int(os.stat(self.path).st_mtime)))
+
+    def __repr__(self):
+        return "File system object «%s»" % (self.name)
+
+    def getMetadata(self):
+        return {
+                "name": self.name,
+                "path": self.path,
+                "type": self.type,
+                "link": self.link,
+                "sizeBytes": self.sizeBytes,
+                "sizeNumber": self.sizeFormatted['number'],
+                "sizeSuffix": self.sizeFormatted['suffix'],
+                "created": self.created,
+                "modified": self.modified,
+            }
+
+    def getFileSize(self, num, suffix='B'):
+        for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+            if abs(num) < 1024.0:
+                return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (unit, suffix)}
+            num /= 1024.0
+        return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
+
+#----------------------------------------------------------------------
 
 # Генерация ответа сервера при ошибке
 def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
@@ -175,28 +206,15 @@ def get_file(askedFilePath=''):
                 files = []
                 if askedFilePath:
                     partialAskedFilePath = '/'.join(askedFilePath.split('/')[:-1])
-                    if partialAskedFilePath:
-                        parentDirectory = url_for('.get_file', askedFilePath=partialAskedFilePath, _external=True)
-                    else:
-                        parentDirectory = url_for('.get_file', _external=True)
+                    parentDirectory = url_for('.get_file', askedFilePath=partialAskedFilePath if partialAskedFilePath else None, _external=True)
                 else:
                     parentDirectory = 'This is root directory!'
+
                 for filename in os.listdir(fileRealPath):
                     filePath = os.path.join(fileRealPath, filename)
-                    fileSizeBytes = int(subprocess.check_output("du -sb %s | cut -f1" % (filePath), shell=True)) if os.path.isdir(filePath) else os.stat(filePath).st_size
-                    fileSize = getFileSize(fileSizeBytes)
 
-                    metadata = {
-                        "name": filename,
-                        "path": filePath,
-                        "type": ('directory' if os.path.isdir(filePath) else magic.from_file(filePath, mime=True)),
-                        "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, filename), _external=True),
-                        "sizeBytes": fileSizeBytes,
-                        "sizeNumber": fileSize['number'],
-                        "sizeSuffix": fileSize['suffix'],
-                        "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
-                        "modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
-                    }
+                    metadata = fileSystemObject(filePath).getMetadata()
+
                     if searchParams:
                         if all(True if val in metadata.get(key, None) else False for key, val in searchParams.items()):
                             files.append(metadata)
@@ -276,16 +294,16 @@ def delete_file(askedFilePath=''):
                             recursive = strtobool(recursive)
                         except Exception:
                             recursive = False
-                            givenMessage += "Value of parameter 'recursive' is incorrect and set as FALSE by default. "
+                            givenMessage += "Value of parameter «recursive» is incorrect and set as FALSE by default. "
                     if recursive:
                         givenMessage += 'Directory delete recursively (with all contents)!'
                         shutil.rmtree(fileRealPath)
                     else:
                         try:
                             os.rmdir(fileRealPath)
-                            givenMessage += 'Directory delete successful!'
+                            givenMessage += 'Directory «%s» delete successful!' % (askedFilePath.split('/')[-1:][0])
                         except Exception:
-                            return jsonHTTPResponse(dbg=request.args.get('dbg', False), givenMessage="Directory not empty! Check directory and delete content manually or set 'recursive' parameter to true if you want delete directory with all its content.")
+                            return jsonHTTPResponse(dbg=request.args.get('dbg', False), givenMessage="Directory not empty! Check directory and delete content manually or set «recursive» parameter to true if you want delete directory with all its content.")
                     return jsonHTTPResponse(status=200, givenMessage=givenMessage)
                 else:
                     return jsonHTTPResponse(status=403, givenMessage='Root directory cannot be deleted!')
@@ -293,7 +311,7 @@ def delete_file(askedFilePath=''):
                 try:
                     os.remove(fileRealPath)
                     fileName = askedFilePath.split('/')[-1:][0]
-                    return jsonHTTPResponse(status=200, givenMessage="File '%s' delete successful!" % (fileName))
+                    return jsonHTTPResponse(status=200, givenMessage="File «%s» delete successful!" % (fileName))
                 except Exception:
                     return jsonHTTPResponse(dbg=request.args.get('dbg', False))
         else:
@@ -316,62 +334,23 @@ def post_file(askedFilePath=''):
             if not os.path.exists(fileRealPath):
                 os.makedirs(fileRealPath)
 
-            uploadedFilesList = []
-
-            if definedFilesNames:
-                definedFilesNames = definedFilesNames.split(' ')
-                for newFileName in definedFilesNames:
-
-                    oldFileName = uploads[0].filename
-                    oldFileExt = oldFileName.split(".")[-1]
-                    newFullFileName = secure_filename(newFileName+ '.' + oldFileExt)
-
-                    filePath = os.path.join(fileRealPath, newFullFileName)
-                    uploads[0].save(filePath)
-                    uploads.pop(0)
-
-                    fileSizeBytes = os.stat(filePath).st_size
-                    fileSize = getFileSize(fileSizeBytes)
-
-                    metadata = {
-                        "name": newFullFileName,
-                        "oldName": oldFileName,
-                        "path": filePath,
-                        "type": magic.from_file(filePath, mime=True),
-                        "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, newFullFileName), _external=True),
-                        "sizeBytes": fileSizeBytes,
-                        "sizeNumber": fileSize['number'],
-                        "sizeSuffix": fileSize['suffix'],
-                        "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
-                        "modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
-                    }
-
-                    uploadedFilesList.append(metadata)
-
+            uploadedFilesList = []    
+            definedFilesNames = definedFilesNames.split(' ') if definedFilesNames else None
 
             for file in uploads:
                 oldFileName = file.filename
                 oldFileExt = oldFileName.split(".")[-1]
-                newFullFileName = secure_filename(uuid.uuid1().hex + '.' + oldFileExt)
+
+                if definedFilesNames:
+                    newFullFileName = secure_filename(definedFilesNames.pop(0) + '.' + oldFileExt)
+                else:
+                    newFullFileName = secure_filename(uuid.uuid1().hex + '.' + oldFileExt)
 
                 filePath = os.path.join(fileRealPath, newFullFileName)
                 file.save(filePath)
 
-                fileSizeBytes = os.stat(filePath).st_size
-                fileSize = getFileSize(fileSizeBytes)
-
-                metadata = {
-                    "name": newFullFileName,
-                    "oldName": oldFileName,
-                    "path": filePath,
-                    "type": magic.from_file(filePath, mime=True),
-                    "link": url_for('.get_file', askedFilePath=os.path.join(askedFilePath, newFullFileName), _external=True),
-                    "sizeBytes": fileSizeBytes,
-                    "sizeNumber": fileSize['number'],
-                    "sizeSuffix": fileSize['suffix'],
-                    "created": str(datetime.fromtimestamp(int(os.stat(filePath).st_ctime))),
-                    "modified": str(datetime.fromtimestamp(int(os.stat(filePath).st_mtime))),
-                }
+                metadata = fileSystemObject(filePath).getMetadata()
+                metadata['oldName'] = oldFileName
 
                 uploadedFilesList.append(metadata)
 
@@ -392,7 +371,7 @@ def post_file(askedFilePath=''):
 def put_file(askedFilePath=''):
     try:
         fileRealPath = os.path.join('/data/static', askedFilePath)
-        newObjectName = request.args.get('name', None)
+        newObjectName = request.args.get('rename', None)
 
         if newObjectName:
             if os.path.exists(fileRealPath):
