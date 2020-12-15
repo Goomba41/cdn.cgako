@@ -17,7 +17,7 @@ class fileSystemObject:
         self.path = path
         self.type = 'directory' if os.path.isdir(self.path) else magic.from_file(self.path, mime=True)
         self.name = self.path.rsplit('/', maxsplit=1)[-1]
-        self.link = url_for('.get_file', askedFilePath=os.path.join('/'.join(self.path.split('/')[3:][:-1]), self.name), _external=True)
+        self.link = url_for('.get_file', askedFilePath=os.path.relpath(self.path, app.config['ROOT_PATH']), _external=True)
         self.sizeBytes = int(subprocess.check_output("du -sb %s | cut -f1" % (self.path), shell=True)) if os.path.isdir(self.path) else os.stat(self.path).st_size
         self.sizeFormatted = self.getFileSize(self.sizeBytes)
         self.created = str(datetime.fromtimestamp(int(os.stat(self.path).st_ctime)))
@@ -191,6 +191,7 @@ def get_file(askedFilePath=''):
             os.makedirs(app.config['ROOT_PATH'])
 
         fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+
         if os.path.exists(fileRealPath):
             isDirectory = os.path.isdir(fileRealPath)
             if isDirectory:
