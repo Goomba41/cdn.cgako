@@ -187,6 +187,9 @@ def hello():
 @app.route('/files/<path:askedFilePath>', methods=['GET'])
 def get_file(askedFilePath=''):
     try:
+        if not os.path.exists(app.config['ROOT_PATH']):
+            os.makedirs(app.config['ROOT_PATH'])
+
         fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
         if os.path.exists(fileRealPath):
             isDirectory = os.path.isdir(fileRealPath)
