@@ -7,6 +7,7 @@ from operator import itemgetter, attrgetter
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+app.config.from_object('config')
 
 #----------------------------------------------------------------------
 
@@ -186,7 +187,7 @@ def hello():
 @app.route('/files/<path:askedFilePath>', methods=['GET'])
 def get_file(askedFilePath=''):
     try:
-        fileRealPath = os.path.join('/data/static', askedFilePath)
+        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
         if os.path.exists(fileRealPath):
             isDirectory = os.path.isdir(fileRealPath)
             if isDirectory:
@@ -272,7 +273,7 @@ def get_file(askedFilePath=''):
                     mimetype='application/json'
                 )
             else:
-                return send_from_directory(directory='/data/static', filename=askedFilePath)
+                return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
         else:
             return jsonHTTPResponse(status=404)
     except Exception:
@@ -282,7 +283,7 @@ def get_file(askedFilePath=''):
 @app.route('/files/<path:askedFilePath>', methods=['DELETE'])
 def delete_file(askedFilePath=''):
     try:
-        fileRealPath = os.path.join('/data/static', askedFilePath)
+        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
         if os.path.exists(fileRealPath):
             isDirectory = os.path.isdir(fileRealPath)
             if isDirectory:
@@ -327,7 +328,7 @@ def post_file(askedFilePath=''):
 
         if uploads:
 
-            fileRealPath = os.path.join('/data/static', askedFilePath)
+            fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
 
             definedFilesNames = request.args.get('names', None)
 
@@ -370,7 +371,7 @@ def post_file(askedFilePath=''):
 @app.route('/files/<path:askedFilePath>', methods=['PUT'])
 def put_file(askedFilePath=''):
     try:
-        fileRealPath = os.path.join('/data/static', askedFilePath)
+        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
         newObjectName = request.args.get('rename', None)
 
         if newObjectName:
