@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os, magic, traceback, math, pathlib, shutil, uuid, subprocess
 from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
 from datetime import datetime
@@ -272,7 +274,7 @@ def get_file(askedFilePath=''):
                     responseObj['sortingParams'] = sortingParams
 
                 return Response(
-                    response=json.dumps(responseObj),
+                    response=json.dumps(responseObj, ensure_ascii=False),
                     status=200,
                     mimetype='application/json'
                 )
@@ -359,13 +361,50 @@ def post_file(askedFilePath=''):
 
                 uploadedFilesList.append(metadata)
 
-            parentDirectory = url_for('.get_file', askedFilePath=askedFilePath if askedFilePath else None, _external=True)  
-            
+            parentDirectory = url_for('.get_file', askedFilePath=askedFilePath if askedFilePath else None, _external=True)
+
+            responseObj = {'uploadedIn': parentDirectory, 'uploadedFiles': uploadedFilesList, 'responseType': 'Success', 'status': 200, 'message': 'Files upload successful!'}
+
+            unprocessedParams = ['createDirectory', 'random']
+            tmpUnprocessedParams = []
+            requestParams = request.args
+            for p in unprocessedParams:
+                if p in requestParams:
+                    tmpUnprocessedParams.append(p)
+            if tmpUnprocessedParams:
+                responseObj['unprocessedParams'] = tmpUnprocessedParams
+
             return Response(
-                response=json.dumps({'uploadedIn': parentDirectory, 'uploadedFiles': uploadedFilesList, 'responseType': 'Success', 'status': 200, 'message': 'Files upload successful!'}),
+                response=json.dumps(responseObj),
                 status=200,
                 mimetype='application/json'
             )
+        elif not uploads:
+            createDirectory = request.args.get('createDirectory', False)
+
+            if not isinstance(createDirectory, bool):
+                try:
+                    createDirectory = strtobool(createDirectory)
+                except Exception:
+                    return Response(
+                        response=json.dumps({'info': "Your «createDirectory» parameter is invalid (must be boolean value)!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                        status=400,
+                        mimetype='application/json'
+                    )
+
+            if createDirectory:
+                return Response(
+                    response=json.dumps({'responseType': 'Success', 'status': 200, 'message': 'Directory created successfully!'}),
+                    status=200,
+                    mimetype='application/json'
+                )
+            else:
+                return Response(
+                    response=json.dumps({'info': "Maybe you want create directory? Send «createDirectory» parameter with True value then!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                    status=400,
+                    mimetype='application/json'
+                )
+
         else:
             return jsonHTTPResponse(status=400, givenMessage="You didn`t send file! Request ignored!")
     except Exception:
