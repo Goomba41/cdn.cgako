@@ -5,10 +5,17 @@ from flask import Flask, send_from_directory, request, json, url_for, Response, 
 from datetime import datetime
 from urllib.parse import urljoin
 from distutils.util import strtobool
-from operator import itemgetter, attrgetter
+from operator import itemgetter
 from werkzeug.utils import secure_filename
 
+from flask_thumbnails import Thumbnail
+from flask_thumbnails.utils import parse_size
+from PIL import Image
+
 app = Flask(__name__)
+
+thumbnail = Thumbnail(app)
+
 app.config.from_object('config')
 
 #----------------------------------------------------------------------
@@ -279,7 +286,64 @@ def get_file(askedFilePath=''):
                     mimetype='application/json'
                 )
             else:
-                return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
+                try:
+                    original = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+                    i=Image.open(original)
+
+                    makeThumbnail = request.args.get('thumbnail', False)
+
+                    if not isinstance(makeThumbnail, bool):
+                        try:
+                            makeThumbnail = strtobool(makeThumbnail)
+                        except Exception:
+                            return Response(
+                                response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «makeThumbnail» parameter is invalid (must be boolean value)!'}),
+                                status=400,
+                                mimetype='application/json'
+                            )
+
+                    if makeThumbnail:
+
+                        thumbnailSize = request.args.get('size', None)
+                        thumbnailCrop = request.args.get('crop', False)
+
+                        if thumbnailSize:
+                            try:
+                                parse_size(thumbnailSize)
+                            except Exception:
+                                return Response(
+                                    response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «size» parameter is invalid (must be INT or INTxINT value)!'}),
+                                    status=400,
+                                    mimetype='application/json'
+                                )
+                        else:
+                            thumbnailSize = '200x200'
+
+                        if not isinstance(thumbnailCrop, bool):
+                            try:
+                                thumbnailCrop = strtobool(thumbnailCrop)
+                                if thumbnailCrop:
+                                    thumbnailCrop = 'fit'
+                                else:
+                                    thumbnailCrop = 'sized'
+                            except Exception:
+                                return Response(
+                                    response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «crop» parameter is invalid (must be boolean value)!'}),
+                                    status=400,
+                                    mimetype='application/json'
+                                )
+
+                        originalPath, originalName = os.path.split(original)
+                        if app.config['THUMBNAILS_FOLDER'][0] != '.':
+                            app.config['THUMBNAILS_FOLDER'] = '.' + app.config['THUMBNAILS_FOLDER']
+                        app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'] =  os.path.join(originalPath, app.config['THUMBNAILS_FOLDER'])
+                        thumbnailLink = thumbnail.get_thumbnail(original, size=thumbnailSize, crop=thumbnailCrop)
+                        thumbnailPath, thumbnailFilename = os.path.split(thumbnailLink)
+                        return send_from_directory(directory=thumbnail.thumbnail_directory, filename=thumbnailFilename)
+                    else:
+                        return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
+                except IOError:
+                    return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
         else:
             return jsonHTTPResponse(status=404)
     except Exception:

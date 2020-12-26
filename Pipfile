@@ -9,6 +9,8 @@ verify_ssl = true
 flask = "*"
 gunicorn = "*"
 python-magic = "*"
+flask-thumbnails = "*"
+pillow = "*"
 
 [requires]
 python_version = "3.8"
