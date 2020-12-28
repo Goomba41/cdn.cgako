@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import os, magic, traceback, math, pathlib, shutil, uuid, subprocess
+import os, magic, traceback, math, pathlib, shutil, uuid, subprocess, hashlib
 from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
 from datetime import datetime
 from urllib.parse import urljoin
@@ -31,22 +31,27 @@ class fileSystemObject:
         self.sizeFormatted = self.getFileSize(self.sizeBytes)
         self.created = str(datetime.fromtimestamp(int(os.stat(self.path).st_ctime)))
         self.modified = str(datetime.fromtimestamp(int(os.stat(self.path).st_mtime)))
+        if os.path.isfile(self.path):
+            self.hash = self.hashFile()
 
     def __repr__(self):
         return "File system object «%s»" % (self.name)
 
     def getMetadata(self):
-        return {
-                "name": self.name,
-                "path": self.path,
-                "type": self.type,
-                "link": self.link,
-                "sizeBytes": self.sizeBytes,
-                "sizeNumber": self.sizeFormatted['number'],
-                "sizeSuffix": self.sizeFormatted['suffix'],
-                "created": self.created,
-                "modified": self.modified,
-            }
+        returnedDict = {
+            "name": self.name,
+            "path": self.path,
+            "type": self.type,
+            "link": self.link,
+            "sizeBytes": self.sizeBytes,
+            "sizeNumber": self.sizeFormatted['number'],
+            "sizeSuffix": self.sizeFormatted['suffix'],
+            "created": self.created,
+            "modified": self.modified,
+        }
+        if hasattr(self, 'hash'):
+            returnedDict["hash"] = self.hash
+        return returnedDict
 
     def getFileSize(self, num, suffix='B'):
         for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
@@ -54,6 +59,13 @@ class fileSystemObject:
                 return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (unit, suffix)}
             num /= 1024.0
         return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
+
+    def hashFile(self):
+        hash = hashlib.sha512()
+        with open(self.path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash.update(chunk)
+        return hash.hexdigest()
 
 #----------------------------------------------------------------------
 
