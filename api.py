@@ -366,6 +366,9 @@ def get_file(askedFilePath=''):
 def delete_file(askedFilePath=''):
     try:
         fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+
+        print(fileRealPath)
+
         if os.path.exists(fileRealPath):
             isDirectory = os.path.isdir(fileRealPath)
             if isDirectory:
@@ -387,16 +390,46 @@ def delete_file(askedFilePath=''):
                             givenMessage += 'Directory «%s» delete successful!' % (askedFilePath.split('/')[-1:][0])
                         except Exception:
                             return jsonHTTPResponse(dbg=request.args.get('dbg', False), givenMessage="Directory not empty! Check directory and delete content manually or set «recursive» parameter to true if you want delete directory with all its content.")
-                    return jsonHTTPResponse(status=200, givenMessage=givenMessage)
                 else:
                     return jsonHTTPResponse(status=403, givenMessage='Root directory cannot be deleted!')
             else:
                 try:
-                    os.remove(fileRealPath)
-                    fileName = askedFilePath.split('/')[-1:][0]
-                    return jsonHTTPResponse(status=200, givenMessage="File «%s» delete successful!" % (fileName))
+                    if os.path.exists(fileRealPath):
+                        os.remove(fileRealPath)
+
+                    filePath, fileName = os.path.split(fileRealPath)
+
+                    if app.config['THUMBNAILS_FOLDER'][0] != '.':
+                        app.config['THUMBNAILS_FOLDER'] = '.' + app.config['THUMBNAILS_FOLDER']
+
+                    thumbnailPath = os.path.join(filePath, app.config['THUMBNAILS_FOLDER'])
+
+                    if os.path.exists(thumbnailPath):
+                        shutil.rmtree(thumbnailPath)
+                    givenMessage="File «%s» delete successful!" % (fileName)
                 except Exception:
                     return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+
+            removeEmpty = request.args.get('removeEmpty', False)
+
+            if not isinstance(removeEmpty, bool):
+                try:
+                    removeEmpty = strtobool(removeEmpty)
+                except Exception:
+                    return Response(
+                        response=json.dumps({'info': "Your «removeEmpty» parameter is invalid (must be boolean value)!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                        status=400,
+                        mimetype='application/json'
+                    )
+
+            if removeEmpty:
+                filePath, fileName = os.path.split(fileRealPath)
+
+                if not os.listdir(filePath):
+                    shutil.rmtree(filePath)
+                    givenMessage += " Empty parent directory also removed."
+
+            return jsonHTTPResponse(status=200, givenMessage=givenMessage)
         else:
             return jsonHTTPResponse(status=404)
     except Exception:
@@ -408,9 +441,9 @@ def post_file(askedFilePath=''):
     try:
         uploads = request.files.getlist('uploads')
 
-        if uploads:
+        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
 
-            fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+        if uploads:
 
             definedFilesNames = request.args.get('names', None)
 
@@ -469,6 +502,8 @@ def post_file(askedFilePath=''):
                     )
 
             if createDirectory:
+                if not os.path.exists(fileRealPath):
+                    os.makedirs(fileRealPath)
                 return Response(
                     response=json.dumps({'responseType': 'Success', 'status': 200, 'message': 'Directory created successfully!'}),
                     status=200,
