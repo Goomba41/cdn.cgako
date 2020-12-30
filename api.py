@@ -1,16 +1,27 @@
 # -*- coding: utf-8 -*-
 
-import os, magic, traceback, math, pathlib, shutil, uuid, subprocess, hashlib
-from flask import Flask, send_from_directory, request, json, url_for, Response, redirect
+import hashlib
+import math
+import os
+import pathlib
+import shutil
+import subprocess
+import traceback
+import uuid
 from datetime import datetime
-from urllib.parse import urljoin
 from distutils.util import strtobool
 from operator import itemgetter
-from werkzeug.utils import secure_filename
+from urllib.parse import urljoin
+
+from flask import Flask, Response, json, redirect, request, \
+    send_from_directory, url_for
 
 from flask_thumbnails import Thumbnail
 from flask_thumbnails.utils import parse_size
-from PIL import Image
+
+import magic
+
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -18,27 +29,49 @@ thumbnail = Thumbnail(app)
 
 app.config.from_object('config')
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 
-class fileSystemObject:
+
+class FileSystemObject:
 
     def __init__(self, path):
         self.path = path
-        self.type = 'directory' if os.path.isdir(self.path) else magic.from_file(self.path, mime=True)
+        self.type = 'directory' if os.path.isdir(self.path) \
+            else magic.from_file(self.path, mime=True)
         self.name = self.path.rsplit('/', maxsplit=1)[-1]
-        self.link = url_for('.get_file', askedFilePath=os.path.relpath(self.path, app.config['ROOT_PATH']), _external=True)
-        self.sizeBytes = int(subprocess.check_output("du -sb %s | cut -f1" % (self.path), shell=True)) if os.path.isdir(self.path) else os.stat(self.path).st_size
-        self.sizeFormatted = self.getFileSize(self.sizeBytes)
-        self.created = str(datetime.fromtimestamp(int(os.stat(self.path).st_ctime)))
-        self.modified = str(datetime.fromtimestamp(int(os.stat(self.path).st_mtime)))
+        self.link = url_for(
+            '.get_file',
+            asked_file_path=os.path.relpath(
+                self.path,
+                app.config['ROOT_PATH']
+            ),
+            _external=True
+        )
+        self.sizeBytes = int(
+            subprocess.check_output(
+                "du -sb %s | cut -f1" % (self.path),
+                shell=True
+            )
+        ) if os.path.isdir(self.path) else os.stat(self.path).st_size
+        self.sizeFormatted = self.get_file_size(self.sizeBytes)
+        self.created = str(
+            datetime.fromtimestamp(
+                int(os.stat(self.path).st_ctime)
+            )
+        )
+        self.modified = str(
+            datetime.fromtimestamp(
+                int(os.stat(self.path).st_mtime)
+            )
+        )
         if os.path.isfile(self.path):
-            self.hash = self.hashFile()
+            self.hash = self.file_hash()
 
     def __repr__(self):
         return "File system object «%s»" % (self.name)
 
-    def getMetadata(self):
-        returnedDict = {
+    def get_metadata(self):
+        returned_dict = {
             "name": self.name,
             "path": self.path,
             "type": self.type,
@@ -50,32 +83,39 @@ class fileSystemObject:
             "modified": self.modified,
         }
         if hasattr(self, 'hash'):
-            returnedDict["hash"] = self.hash
-        return returnedDict
+            returned_dict["hash"] = self.hash
+        return returned_dict
 
-    def getFileSize(self, num, suffix='B'):
-        for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+    def get_file_size(self, num, suffix='B'):
+        for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
             if abs(num) < 1024.0:
-                return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (unit, suffix)}
+                return {
+                    'number': float("{:.2f}".format(num)),
+                    'suffix': "%s%s" % (unit, suffix)
+                }
             num /= 1024.0
-        return {'number': float("{:.2f}".format(num)), 'suffix': "%s%s" % (num, 'Yi', suffix)}
+        return {
+            'number': float("{:.2f}".format(num)),
+            'suffix': "%s%s" % (num, 'Yi', suffix)
+        }
 
-    def hashFile(self):
+    def file_hash(self):
         hash = hashlib.sha512()
         with open(self.path, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash.update(chunk)
         return hash.hexdigest()
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+
 
 # Генерация ответа сервера при ошибке
-def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
+def json_http_response(dbg=False, given_message=None, status=500):
     """Вывод серверной ошибки с трейсом. Параметр dbg отвечает за вывод
     в формате traceback."""
-    
+
     if status in (400, 401, 403, 404, 500):
-        responseType = 'Error'
+        response_type = 'Error'
         if status == 400:
             message = 'Bad request!'
         if status == 401:
@@ -87,21 +127,25 @@ def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
         if status == 500:
             message = 'Internal server error!'
     elif status in (200, 201):
-        responseType = 'Success'
+        response_type = 'Success'
         if status == 200:
             message = 'OK!'
         if status == 201:
             message = 'Created!'
     elif status in (304,):
-        responseType = 'Warning'
+        response_type = 'Warning'
         message = 'Not modified!'
     else:
-        responseType = 'Info'
+        response_type = 'Info'
         message = 'I don`t know what to say! Probably this is test response?'
 
-    info = {'responseType': responseType, 'message': message, 'status': status}
+    info = {
+        'responseType': response_type,
+        'message': message,
+        'status': status
+    }
 
-    info['message'] = givenMessage if givenMessage is not None else message
+    info['message'] = given_message if given_message is not None else message
 
     if isinstance(dbg, bool):
         if dbg is True:
@@ -111,7 +155,9 @@ def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
             if strtobool(dbg):
                 info['debugInfo'] = traceback.format_exc()
         except Exception:
-            info['debugInfo'] = "Debugging info is turned off, because incorrect type of value of parameter 'dbg' (should be boolean)"
+            info['debugInfo'] = "Debugging info is turned off, because " \
+                "incorrect type of value of parameter 'dbg' " \
+                "(should be boolean)"
 
     return Response(
         response=json.dumps(info),
@@ -119,19 +165,22 @@ def jsonHTTPResponse(dbg=False, givenMessage=None, status=500):
         mimetype='application/json'
     )
 
+
 # Пагинация получаемого с API списка
-def pagination_of_list(query_result, url, queryParams):
+def pagination_of_list(query_result, url, query_params):
     """ Пагинация результатов запроса. Принимает параметры:
     результат запроса (json), URL API для генерации ссылок, стартовая позиция,
     количество выводимых записей"""
 
-    start = queryParams.get('start', 1)
-    limit = queryParams.get('limit', 10)
+    start = query_params.get('start', 1)
+    limit = query_params.get('limit', 10)
 
-    queryParamsString = ''
-    for i in queryParams:
+    query_params_string = ''
+    for i in query_params:
         if i not in ('start', 'limit'):
-            queryParamsString += '&%s=%s' % (i, queryParams.get(i).replace(' ', '+'))
+            query_params_string += '&%s=%s' % (
+                i, query_params.get(i).replace(' ', '+')
+            )
 
     records_count = len(query_result)
 
@@ -155,7 +204,7 @@ def pagination_of_list(query_result, url, queryParams):
         start = records_count
     elif records_count < start and records_count <= 0:
         start = 1
-    
+
     response_obj = {}
     response_obj['start'] = start
     response_obj['limit'] = limit
@@ -170,7 +219,11 @@ def pagination_of_list(query_result, url, queryParams):
     else:
         start_copy = max(1, start - limit)
         limit_copy = start - 1
-        params = '?start=%d&limit=%d%s' % (start_copy, limit_copy, queryParamsString)
+        params = '?start=%d&limit=%d%s' % (
+            start_copy,
+            limit_copy,
+            query_params_string
+        )
         new_url = urljoin(url,
                           params)
         response_obj['previousPage'] = new_url
@@ -180,7 +233,11 @@ def pagination_of_list(query_result, url, queryParams):
         response_obj['nextPage'] = ''
     else:
         start_copy = start + limit
-        params = '?start=%d&limit=%d%s' % (start_copy, limit, queryParamsString)
+        params = '?start=%d&limit=%d%s' % (
+            start_copy,
+            limit,
+            query_params_string
+        )
         new_url = urljoin(url,
                           params)
         response_obj['nextPage'] = new_url
@@ -190,370 +247,581 @@ def pagination_of_list(query_result, url, queryParams):
 
     return response_obj
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+
 
 # Фавиконка
 @app.route('/favicon.ico')
 def favicon():
-    return send_from_directory(directory=pathlib.Path().absolute(), filename='faviconDev.ico')
+    return send_from_directory(
+        directory=pathlib.Path().absolute(),
+        filename='faviconDev.ico'
+    )
+
 
 # Редирект с корня на список файлов
 @app.route('/', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def hello():
     return redirect(url_for('get_file', _external=True))
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+
 
 @app.route('/files', methods=['GET'])
-@app.route('/files/<path:askedFilePath>', methods=['GET'])
-def get_file(askedFilePath=''):
+@app.route('/files/<path:asked_file_path>', methods=['GET'])
+def get_file(asked_file_path=''):
     try:
         if not os.path.exists(app.config['ROOT_PATH']):
             os.makedirs(app.config['ROOT_PATH'])
 
-        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+        file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
 
-        if os.path.exists(fileRealPath):
-            isDirectory = os.path.isdir(fileRealPath)
-            if isDirectory:
+        if os.path.exists(file_real_path):
+            is_directory = os.path.isdir(file_real_path)
+            if is_directory:
 
-                searchQuery = request.args.get('q', None)
-                if searchQuery:
+                search_query = request.args.get('q', None)
+                if search_query:
                     try:
-                        searchParamsAll = dict(e.split(':') for e in searchQuery.split(' '))
+                        search_params_all = dict(
+                            e.split(':') for e in search_query.split(' ')
+                        )
                     except Exception:
-                        return jsonHTTPResponse(status=400, givenMessage="Incorrect value of parameter 'q' (should be 'field1:value1+field2:value2')", dbg=request.args.get('dbg', False))
-                    supportedParams = ('name', 'sizeNumber', 'sizeSuffix', 'type', 'created', 'modified', 'sizeBytes')
-                    unprocessedParams = ()
-                    searchParams = {k: searchParamsAll[k] for k in supportedParams if k in searchParamsAll}
+                        return json_http_response(
+                            status=400,
+                            given_message="Incorrect value of parameter 'q' "
+                            "(should be 'field1:value1+field2:value2')",
+                            dbg=request.args.get('dbg', False)
+                        )
+                    supported_params = (
+                        'name',
+                        'sizeNumber',
+                        'sizeSuffix',
+                        'type',
+                        'created',
+                        'modified',
+                        'sizeBytes'
+                    )
+                    unprocessed_params = ()
+                    search_params = {
+                        k: search_params_all[k] for k in supported_params
+                        if k in search_params_all
+                    }
                 else:
-                    searchParams = None
+                    search_params = None
 
                 files = []
-                if askedFilePath:
-                    partialAskedFilePath = '/'.join(askedFilePath.split('/')[:-1])
-                    parentDirectory = url_for('.get_file', askedFilePath=partialAskedFilePath if partialAskedFilePath else None, _external=True)
+                if asked_file_path:
+                    partial_asked_file_path = '/'.join(
+                        asked_file_path.split('/')[:-1]
+                    )
+                    parent_directory = url_for(
+                        '.get_file',
+                        asked_file_path=partial_asked_file_path
+                        if partial_asked_file_path else None,
+                        _external=True
+                    )
                 else:
-                    parentDirectory = 'This is root directory!'
+                    parent_directory = 'This is root directory!'
 
-                for filename in os.listdir(fileRealPath):
-                    filePath = os.path.join(fileRealPath, filename)
+                for filename in os.listdir(file_real_path):
+                    file_path = os.path.join(file_real_path, filename)
 
-                    metadata = fileSystemObject(filePath).getMetadata()
+                    metadata = FileSystemObject(file_path).get_metadata()
 
-                    if searchParams:
-                        if all(True if val in metadata.get(key, None) else False for key, val in searchParams.items()):
+                    if search_params:
+                        if all(
+                            True if val in metadata.get(key, None) else False
+                            for key, val in search_params.items()
+                        ):
                             files.append(metadata)
                     else:
                         files.append(metadata)
 
-                sortingQuery = request.args.get('sf', None)
-                sortingOrder = request.args.get('so', None)
+                sorting_query = request.args.get('sf', None)
+                sorting_order = request.args.get('so', None)
 
-                sortingReverse = False
-                if sortingOrder and sortingOrder.lower() == 'd':
-                    sortingReverse = True
+                sorting_reverse = False
+                if sorting_order and sorting_order.lower() == 'd':
+                    sorting_reverse = True
 
-                if sortingQuery:
+                if sorting_query:
                     try:
-                        sortingParamsAll = sortingQuery.split(' ')
+                        sorting_params_all = sorting_query.split(' ')
                     except Exception:
-                        return jsonHTTPResponse(status=400, givenMessage="Incorrect value of parameter 'sf' (should be 'field1+field2')", dbg=request.args.get('dbg', False))
-                    supportedSParams = ('name', 'type', 'created', 'modified', 'sizeBytes', 'sizeNumber', 'sizeSuffix')
-                    unprocessedSParams = ('sizeNumber', 'sizeSuffix')
-                    sortingParams = [k for k in supportedSParams if (k in sortingParamsAll and k not in unprocessedSParams)]
-                    if not sortingParams:
-                        sortingParams.append('name')
+                        return json_http_response(
+                            status=400,
+                            given_message="Incorrect value of parameter 'sf' "
+                            "(should be 'field1+field2')",
+                            dbg=request.args.get('dbg', False)
+                        )
+                    supported_s_params = (
+                        'name',
+                        'type',
+                        'created',
+                        'modified',
+                        'sizeBytes',
+                        'sizeNumber',
+                        'sizeSuffix'
+                    )
+                    unprocessed_s_params = ('sizeNumber', 'sizeSuffix')
+                    sorting_params = [
+                        k for k in supported_s_params
+                        if (
+                            k in sorting_params_all and
+                            k not in unprocessed_s_params
+                        )
+                    ]
+                    if not sorting_params:
+                        sorting_params.append('name')
                 else:
-                    sortingParams = ['name']
+                    sorting_params = ['name']
 
-                sortedFiles = sorted(files, key = itemgetter(*sortingParams), reverse = sortingReverse)
-
-                paginatedData = pagination_of_list(
-                    sortedFiles,
-                    url_for('.get_file', askedFilePath=askedFilePath, _external=True),
-                    queryParams = request.args
+                sorted_files = sorted(
+                    files,
+                    key=itemgetter(*sorting_params),
+                    reverse=sorting_reverse
                 )
 
-                responseObj = {'parentDirectory': parentDirectory, 'filesList': paginatedData.pop('results'), 'paginationData': paginatedData}
+                paginated_data = pagination_of_list(
+                    sorted_files,
+                    url_for(
+                        '.get_file',
+                        asked_file_path=asked_file_path,
+                        _external=True
+                    ),
+                    query_params=request.args
+                )
 
-                if searchParams:
-                    for k in searchParamsAll:
-                        searchParams[k] = 'Unsupported :(' if k not in supportedParams else 'Unprocessed :(' if k in unprocessedParams else searchParams[k]
-                    responseObj['searchParams'] = searchParams
-                if sortingQuery or sortingOrder:
-                    sortingParams = {'sortedBy': sortingParams}
-                    if sortingQuery:
-                        unsupportedSParams = [k for k in sortingParamsAll if k not in supportedSParams]
-                        if unsupportedSParams:
-                            sortingParams['unsupportedParams'] = unsupportedSParams
-                        if unprocessedSParams:
-                            sortingParams['unprocessedParams'] = [k for k in sortingParamsAll if k in unprocessedSParams]
-                    sortingParams['sortingDirection'] = 'Desc' if sortingReverse else 'Asc'
-                    responseObj['sortingParams'] = sortingParams
+                response_obj = {
+                    'parentDirectory': parent_directory,
+                    'filesList': paginated_data.pop('results'),
+                    'paginationData': paginated_data
+                }
+
+                if search_params:
+                    for k in search_params_all:
+                        search_params[k] = 'Unsupported :(' \
+                            if k not in supported_params else 'Unprocessed :('\
+                            if k in unprocessed_params else search_params[k]
+                    response_obj['searchParams'] = search_params
+                if sorting_query or sorting_order:
+                    sorting_params = {'sortedBy': sorting_params}
+                    if sorting_query:
+                        unsupported_s_params = [
+                            k for k in sorting_params_all
+                            if k not in supported_s_params
+                        ]
+                        if unsupported_s_params:
+                            sorting_params['unsupportedParams'] =\
+                                unsupported_s_params
+                        if unprocessed_s_params:
+                            sorting_params['unprocessedParams'] = [
+                                k for k in sorting_params_all
+                                if k in unprocessed_s_params
+                            ]
+                    sorting_params['sortingDirection'] = 'Desc' \
+                        if sorting_reverse else 'Asc'
+                    response_obj['sortingParams'] = sorting_params
 
                 return Response(
-                    response=json.dumps(responseObj, ensure_ascii=False),
+                    response=json.dumps(response_obj, ensure_ascii=False),
                     status=200,
                     mimetype='application/json'
                 )
             else:
                 try:
-                    original = os.path.join(app.config['ROOT_PATH'], askedFilePath)
-                    i=Image.open(original)
+                    original = os.path.join(
+                        app.config['ROOT_PATH'],
+                        asked_file_path
+                    )
 
-                    makeThumbnail = request.args.get('thumbnail', False)
+                    make_thumbnail = request.args.get('thumbnail', False)
 
-                    if not isinstance(makeThumbnail, bool):
+                    if not isinstance(make_thumbnail, bool):
                         try:
-                            makeThumbnail = strtobool(makeThumbnail)
+                            make_thumbnail = strtobool(make_thumbnail)
                         except Exception:
                             return Response(
-                                response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «makeThumbnail» parameter is invalid (must be boolean value)!'}),
+                                response=json.dumps(
+                                    {
+                                        'responseType': 'Error',
+                                        'status': 400,
+                                        'message': 'Your «makeThumbnail» '
+                                        'parameter is invalid (must be '
+                                        'boolean value)!'
+                                    }
+                                ),
                                 status=400,
                                 mimetype='application/json'
                             )
 
-                    if makeThumbnail:
+                    if make_thumbnail:
 
-                        thumbnailSize = request.args.get('size', None)
-                        thumbnailCrop = request.args.get('crop', False)
+                        thumbnail_size = request.args.get('size', None)
+                        thumbnail_crop = request.args.get('crop', False)
 
-                        if thumbnailSize:
+                        if thumbnail_size:
                             try:
-                                parse_size(thumbnailSize)
+                                parse_size(thumbnail_size)
                             except Exception:
                                 return Response(
-                                    response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «size» parameter is invalid (must be INT or INTxINT value)!'}),
+                                    response=json.dumps(
+                                        {
+                                            'responseType': 'Error',
+                                            'status': 400,
+                                            'message': 'Your «size» parameter '
+                                            'is invalid (must be INT '
+                                            'or INTxINT value)!'
+                                        }
+                                    ),
                                     status=400,
                                     mimetype='application/json'
                                 )
                         else:
-                            thumbnailSize = '200x200'
+                            thumbnail_size = '200x200'
 
-                        if not isinstance(thumbnailCrop, bool):
+                        if not isinstance(thumbnail_crop, bool):
                             try:
-                                thumbnailCrop = strtobool(thumbnailCrop)
-                                if thumbnailCrop:
-                                    thumbnailCrop = 'fit'
+                                thumbnail_crop = strtobool(thumbnail_crop)
+                                if thumbnail_crop:
+                                    thumbnail_crop = 'fit'
                                 else:
-                                    thumbnailCrop = 'sized'
+                                    thumbnail_crop = 'sized'
                             except Exception:
                                 return Response(
-                                    response=json.dumps({'responseType': 'Error', 'status': 400, 'message': 'Your «crop» parameter is invalid (must be boolean value)!'}),
+                                    response=json.dumps(
+                                        {
+                                            'responseType': 'Error',
+                                            'status': 400,
+                                            'message': 'Your «crop» parameter '
+                                            'is invalid (must be '
+                                            'boolean value)!'
+                                        }
+                                    ),
                                     status=400,
                                     mimetype='application/json'
                                 )
 
                         originalPath, originalName = os.path.split(original)
                         if app.config['THUMBNAILS_FOLDER'][0] != '.':
-                            app.config['THUMBNAILS_FOLDER'] = '.' + app.config['THUMBNAILS_FOLDER']
-                        app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'] =  os.path.join(originalPath, app.config['THUMBNAILS_FOLDER'])
-                        thumbnailLink = thumbnail.get_thumbnail(original, size=thumbnailSize, crop=thumbnailCrop)
-                        thumbnailPath, thumbnailFilename = os.path.split(thumbnailLink)
-                        return send_from_directory(directory=thumbnail.thumbnail_directory, filename=thumbnailFilename)
+                            app.config['THUMBNAILS_FOLDER'] = '.'\
+                                + app.config['THUMBNAILS_FOLDER']
+                        app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'] = \
+                            os.path.join(
+                                originalPath,
+                                app.config['THUMBNAILS_FOLDER']
+                        )
+                        thumbnail_link = thumbnail.get_thumbnail(
+                            original,
+                            size=thumbnail_size,
+                            crop=thumbnail_crop
+                        )
+                        thumbnail_path, thumbnailFilename = os.path.split(
+                            thumbnail_link
+                        )
+                        return send_from_directory(
+                            directory=thumbnail.thumbnail_directory,
+                            filename=thumbnailFilename
+                        )
                     else:
-                        return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
+                        return send_from_directory(
+                            directory=app.config['ROOT_PATH'],
+                            filename=asked_file_path
+                        )
                 except IOError:
-                    return send_from_directory(directory=app.config['ROOT_PATH'], filename=askedFilePath)
+                    return send_from_directory(
+                        directory=app.config['ROOT_PATH'],
+                        filename=asked_file_path
+                    )
         else:
-            return jsonHTTPResponse(status=404)
+            return json_http_response(status=404)
     except Exception:
-        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+        return json_http_response(dbg=request.args.get('dbg', False))
+
 
 @app.route('/files', methods=['DELETE'])
-@app.route('/files/<path:askedFilePath>', methods=['DELETE'])
-def delete_file(askedFilePath=''):
+@app.route('/files/<path:asked_file_path>', methods=['DELETE'])
+def delete_file(asked_file_path=''):
     try:
-        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+        file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
 
-        print(fileRealPath)
-
-        if os.path.exists(fileRealPath):
-            isDirectory = os.path.isdir(fileRealPath)
-            if isDirectory:
-                if askedFilePath:
+        if os.path.exists(file_real_path):
+            is_directory = os.path.isdir(file_real_path)
+            if is_directory:
+                if asked_file_path:
                     recursive = request.args.get('recursive', False)
-                    givenMessage = ''
+                    given_message = ''
                     if not isinstance(recursive, bool):
                         try:
                             recursive = strtobool(recursive)
                         except Exception:
                             recursive = False
-                            givenMessage += "Value of parameter «recursive» is incorrect and set as FALSE by default. "
+                            given_message += "Value of parameter «recursive» "
+                            "is incorrect and set as FALSE by default. "
                     if recursive:
-                        givenMessage += 'Directory delete recursively (with all contents)!'
-                        shutil.rmtree(fileRealPath)
+                        given_message += 'Directory delete recursively '
+                        '(with all contents)!'
+                        shutil.rmtree(file_real_path)
                     else:
                         try:
-                            os.rmdir(fileRealPath)
-                            givenMessage += 'Directory «%s» delete successful!' % (askedFilePath.split('/')[-1:][0])
+                            os.rmdir(file_real_path)
+                            given_message += 'Directory «%s» delete '
+                            'successful!' % (
+                                asked_file_path.split('/')[-1:][0]
+                            )
                         except Exception:
-                            return jsonHTTPResponse(dbg=request.args.get('dbg', False), givenMessage="Directory not empty! Check directory and delete content manually or set «recursive» parameter to true if you want delete directory with all its content.")
+                            return json_http_response(
+                                dbg=request.args.get('dbg', False),
+                                given_message="Directory not empty! Check "
+                                "directory and delete content manually or "
+                                "set «recursive» parameter to true if you "
+                                "want delete directory with all its "
+                                "content."
+                            )
                 else:
-                    return jsonHTTPResponse(status=403, givenMessage='Root directory cannot be deleted!')
+                    return json_http_response(
+                        status=403,
+                        given_message='Root directory cannot be deleted!'
+                    )
             else:
                 try:
-                    if os.path.exists(fileRealPath):
-                        os.remove(fileRealPath)
+                    if os.path.exists(file_real_path):
+                        os.remove(file_real_path)
 
-                    filePath, fileName = os.path.split(fileRealPath)
+                    file_path, fileName = os.path.split(file_real_path)
 
                     if app.config['THUMBNAILS_FOLDER'][0] != '.':
-                        app.config['THUMBNAILS_FOLDER'] = '.' + app.config['THUMBNAILS_FOLDER']
+                        app.config['THUMBNAILS_FOLDER'] = '.'\
+                            + app.config['THUMBNAILS_FOLDER']
 
-                    thumbnailPath = os.path.join(filePath, app.config['THUMBNAILS_FOLDER'])
+                    thumbnail_path = os.path.join(
+                        file_path,
+                        app.config['THUMBNAILS_FOLDER']
+                    )
 
-                    if os.path.exists(thumbnailPath):
-                        shutil.rmtree(thumbnailPath)
-                    givenMessage="File «%s» delete successful!" % (fileName)
+                    if os.path.exists(thumbnail_path):
+                        shutil.rmtree(thumbnail_path)
+                    given_message = "File «%s» delete successful!" % (fileName)
                 except Exception:
-                    return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+                    return json_http_response(
+                        dbg=request.args.get('dbg', False)
+                    )
 
-            removeEmpty = request.args.get('removeEmpty', False)
+            remove_empty = request.args.get('removeEmpty', False)
 
-            if not isinstance(removeEmpty, bool):
+            if not isinstance(remove_empty, bool):
                 try:
-                    removeEmpty = strtobool(removeEmpty)
+                    remove_empty = strtobool(remove_empty)
                 except Exception:
                     return Response(
-                        response=json.dumps({'info': "Your «removeEmpty» parameter is invalid (must be boolean value)!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                        response=json.dumps(
+                            {
+                                'info': "Your «removeEmpty» "
+                                "parameter is invalid (must "
+                                "be boolean value)!",
+                                'responseType': 'Error',
+                                'status': 400,
+                                'message': 'You didn`t send '
+                                'file! Request ignored!'
+                            }
+                        ),
                         status=400,
                         mimetype='application/json'
                     )
 
-            if removeEmpty:
-                filePath, fileName = os.path.split(fileRealPath)
+            if remove_empty:
+                file_path, fileName = os.path.split(file_real_path)
 
-                if not os.listdir(filePath):
-                    shutil.rmtree(filePath)
-                    givenMessage += " Empty parent directory also removed."
+                if not os.listdir(file_path):
+                    shutil.rmtree(file_path)
+                    given_message += " Empty parent directory also removed."
 
-            return jsonHTTPResponse(status=200, givenMessage=givenMessage)
+            return json_http_response(status=200, given_message=given_message)
         else:
-            return jsonHTTPResponse(status=404)
+            return json_http_response(status=404)
     except Exception:
-        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+        return json_http_response(dbg=request.args.get('dbg', False))
+
 
 @app.route('/files', methods=['POST'])
-@app.route('/files/<path:askedFilePath>', methods=['POST'])
-def post_file(askedFilePath=''):
+@app.route('/files/<path:asked_file_path>', methods=['POST'])
+def post_file(asked_file_path=''):
     try:
         uploads = request.files.getlist('uploads')
 
-        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
+        file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
 
         if uploads:
 
-            definedFilesNames = request.args.get('names', None)
+            defined_files_names = request.args.get('names', None)
 
-            if not os.path.exists(fileRealPath):
-                os.makedirs(fileRealPath)
+            if not os.path.exists(file_real_path):
+                os.makedirs(file_real_path)
 
-            uploadedFilesList = []    
-            definedFilesNames = definedFilesNames.split(' ') if definedFilesNames else None
+            uploaded_files_list = []
+            defined_files_names = defined_files_names.split(' ')\
+                if defined_files_names else None
 
             for file in uploads:
-                oldFileName = file.filename
-                oldFileExt = oldFileName.split(".")[-1]
+                old_file_name = file.filename
+                old_file_ext = old_file_name.split(".")[-1]
 
-                if definedFilesNames:
-                    newFullFileName = secure_filename(definedFilesNames.pop(0) + '.' + oldFileExt)
+                if defined_files_names:
+                    new_full_file_name = secure_filename(
+                        defined_files_names.pop(0) + '.' + old_file_ext
+                    )
                 else:
-                    newFullFileName = secure_filename(uuid.uuid1().hex + '.' + oldFileExt)
+                    new_full_file_name = secure_filename(
+                        uuid.uuid1().hex + '.' + old_file_ext
+                    )
 
-                filePath = os.path.join(fileRealPath, newFullFileName)
-                file.save(filePath)
+                file_path = os.path.join(file_real_path, new_full_file_name)
+                file.save(file_path)
 
-                metadata = fileSystemObject(filePath).getMetadata()
-                metadata['oldName'] = oldFileName
+                metadata = FileSystemObject(file_path).get_metadata()
+                metadata['oldName'] = old_file_name
 
-                uploadedFilesList.append(metadata)
+                uploaded_files_list.append(metadata)
 
-            parentDirectory = url_for('.get_file', askedFilePath=askedFilePath if askedFilePath else None, _external=True)
+            parent_directory = url_for(
+                '.get_file',
+                asked_file_path=asked_file_path if asked_file_path else None,
+                _external=True
+            )
 
-            responseObj = {'uploadedIn': parentDirectory, 'uploadedFiles': uploadedFilesList, 'responseType': 'Success', 'status': 200, 'message': 'Files upload successful!'}
+            response_obj = {
+                'uploadedIn': parent_directory,
+                'uploadedFiles': uploaded_files_list,
+                'responseType': 'Success',
+                'status': 200,
+                'message': 'Files upload successful!'
+            }
 
-            unprocessedParams = ['createDirectory', 'random']
-            tmpUnprocessedParams = []
-            requestParams = request.args
-            for p in unprocessedParams:
-                if p in requestParams:
-                    tmpUnprocessedParams.append(p)
-            if tmpUnprocessedParams:
-                responseObj['unprocessedParams'] = tmpUnprocessedParams
+            unprocessed_params = ['createDirectory', 'random']
+            tmp_unprocessed_params = []
+            request_params = request.args
+            for p in unprocessed_params:
+                if p in request_params:
+                    tmp_unprocessed_params.append(p)
+            if tmp_unprocessed_params:
+                response_obj['unprocessedParams'] = tmp_unprocessed_params
 
             return Response(
-                response=json.dumps(responseObj),
+                response=json.dumps(response_obj),
                 status=200,
                 mimetype='application/json'
             )
         elif not uploads:
-            createDirectory = request.args.get('createDirectory', False)
+            create_directory = request.args.get('createDirectory', False)
 
-            if not isinstance(createDirectory, bool):
+            if not isinstance(create_directory, bool):
                 try:
-                    createDirectory = strtobool(createDirectory)
+                    create_directory = strtobool(create_directory)
                 except Exception:
                     return Response(
-                        response=json.dumps({'info': "Your «createDirectory» parameter is invalid (must be boolean value)!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                        response=json.dumps(
+                            {
+                                'info': "Your «createDirectory» parameter "
+                                "is invalid (must be boolean value)!",
+                                'responseType': 'Error',
+                                'status': 400,
+                                'message': 'You didn`t send file! Request '
+                                'ignored!'
+                            }
+                        ),
                         status=400,
                         mimetype='application/json'
                     )
 
-            if createDirectory:
-                if not os.path.exists(fileRealPath):
-                    os.makedirs(fileRealPath)
+            if create_directory:
+                if not os.path.exists(file_real_path):
+                    os.makedirs(file_real_path)
                 return Response(
-                    response=json.dumps({'responseType': 'Success', 'status': 200, 'message': 'Directory created successfully!'}),
+                    response=json.dumps(
+                        {
+                            'responseType': 'Success',
+                            'status': 200,
+                            'message': 'Directory created successfully!'
+                        }
+                    ),
                     status=200,
                     mimetype='application/json'
                 )
             else:
                 return Response(
-                    response=json.dumps({'info': "Maybe you want create directory? Send «createDirectory» parameter with True value then!", 'responseType': 'Error', 'status': 400, 'message': 'You didn`t send file! Request ignored!'}),
+                    response=json.dumps(
+                        {
+                            'info': "Maybe you want create directory? Send "
+                            "«createDirectory» parameter with "
+                            "True value then!",
+                            'responseType': 'Error',
+                            'status': 400,
+                            'message': 'You didn`t send file! Request ignored!'
+                        }
+                    ),
                     status=400,
                     mimetype='application/json'
                 )
 
         else:
-            return jsonHTTPResponse(status=400, givenMessage="You didn`t send file! Request ignored!")
+            return json_http_response(
+                status=400,
+                given_message="You didn`t send file! Request ignored!"
+            )
     except Exception:
-        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+        return json_http_response(dbg=request.args.get('dbg', False))
+
 
 @app.route('/files', methods=['PUT'])
-@app.route('/files/<path:askedFilePath>', methods=['PUT'])
-def put_file(askedFilePath=''):
+@app.route('/files/<path:asked_file_path>', methods=['PUT'])
+def put_file(asked_file_path=''):
     try:
-        fileRealPath = os.path.join(app.config['ROOT_PATH'], askedFilePath)
-        newObjectName = request.args.get('rename', None)
+        file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
+        new_object_name = request.args.get('rename', None)
 
-        if newObjectName:
-            if os.path.exists(fileRealPath):
+        if new_object_name:
+            if os.path.exists(file_real_path):
 
-                realPathSplitted = fileRealPath.rsplit('/', maxsplit=1)
-                oldFileName = realPathSplitted[1]
-                fileSavePath = realPathSplitted[0]
+                real_path_splitted = file_real_path.rsplit('/', maxsplit=1)
+                old_file_name = real_path_splitted[1]
+                file_save_path = real_path_splitted[0]
 
-                isDirectory = os.path.isdir(fileRealPath)
-                if isDirectory:
-                    objectType = 'Directory'
-                    if not askedFilePath:
-                        return jsonHTTPResponse(status=400, givenMessage="Root directory cannot be renamed!", dbg=request.args.get('dbg', False))
+                is_directory = os.path.isdir(file_real_path)
+                if is_directory:
+                    object_type = 'Directory'
+                    if not asked_file_path:
+                        return json_http_response(
+                            status=400,
+                            given_message="Root directory cannot be renamed!",
+                            dbg=request.args.get('dbg', False)
+                        )
                 else:
-                    objectType = 'File'
-                    oldFileExt = oldFileName.split('.')[-1]
-                    newObjectName += '.' + oldFileExt
- 
-                os.rename(fileRealPath, os.path.join(fileSavePath, newObjectName))
+                    object_type = 'File'
+                    old_file_ext = old_file_name.split('.')[-1]
+                    new_object_name += '.' + old_file_ext
 
-                return jsonHTTPResponse(status=200, givenMessage="%s «%s» renamed to «%s» successfully!" % (objectType, oldFileName, newObjectName), dbg=request.args.get('dbg', False))
+                os.rename(file_real_path, os.path.join(
+                    file_save_path,
+                    new_object_name
+                ))
+
+                return json_http_response(
+                    status=200,
+                    given_message="%s «%s» renamed to «%s» successfully!"\
+                        % (object_type, old_file_name, new_object_name),
+                    dbg=request.args.get('dbg', False)
+                )
             else:
-                return jsonHTTPResponse(status=404)
+                return json_http_response(status=404)
         else:
-            return jsonHTTPResponse(status=400, givenMessage="You didn`t send a new name for file/directory! Request ignored!", dbg=request.args.get('dbg', False))
+            return json_http_response(
+                status=400,
+                given_message="You didn`t send a new name for file/directory! Request ignored!",
+                dbg=request.args.get('dbg', False)
+            )
     except Exception:
-        return jsonHTTPResponse(dbg=request.args.get('dbg', False))
+        return json_http_response(dbg=request.args.get('dbg', False))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')
