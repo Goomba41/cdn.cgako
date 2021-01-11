@@ -1,3 +1,4 @@
+"""API for handling with files on server."""
 # -*- coding: utf-8 -*-
 
 import hashlib
@@ -33,8 +34,10 @@ app.config.from_object('config')
 
 
 class FileSystemObject:
+    """Class describing files and directories on filesystem as objects."""
 
     def __init__(self, path):
+        """Class description."""
         self.path = path
         self.type = 'directory' if os.path.isdir(self.path) \
             else magic.from_file(self.path, mime=True)
@@ -68,9 +71,11 @@ class FileSystemObject:
             self.hash = self.file_hash()
 
     def __repr__(self):
+        """Class representation string."""
         return "File system object «%s»" % (self.name)
 
     def get_metadata(self):
+        """Get class data in json dictionary."""
         returned_dict = {
             "name": self.name,
             "path": self.path,
@@ -87,6 +92,7 @@ class FileSystemObject:
         return returned_dict
 
     def get_file_size(self, num, suffix='B'):
+        """Get size in json dictionary with auto detecting measure unit."""
         for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
             if abs(num) < 1024.0:
                 return {
@@ -100,6 +106,7 @@ class FileSystemObject:
         }
 
     def file_hash(self):
+        """Get file hash in sha512."""
         hash = hashlib.sha512()
         with open(self.path, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
@@ -111,9 +118,11 @@ class FileSystemObject:
 
 # Генерация ответа сервера при ошибке
 def json_http_response(dbg=False, given_message=None, status=500):
-    """Вывод серверной ошибки с трейсом. Параметр dbg отвечает за вывод
-    в формате traceback."""
+    """
+    Return http response by status and with given message.
 
+    If dbg parameter set - return with traceback
+    """
     if status in (400, 401, 403, 404, 500):
         response_type = 'Error'
         if status == 400:
@@ -166,12 +175,15 @@ def json_http_response(dbg=False, given_message=None, status=500):
     )
 
 
-# Пагинация получаемого с API списка
 def pagination_of_list(query_result, url, query_params):
-    """ Пагинация результатов запроса. Принимает параметры:
-    результат запроса (json), URL API для генерации ссылок, стартовая позиция,
-    количество выводимых записей"""
+    """
+    Pagination of query results.
 
+    Required parameters:
+    query_result - result of query in json dictionary
+    url - URL API for links generation
+    query_params - parameters, sended with query
+    """
     start = query_params.get('start', 1)
     limit = query_params.get('limit', 10)
 
@@ -250,18 +262,18 @@ def pagination_of_list(query_result, url, query_params):
 # ----------------------------------------------------------------------
 
 
-# Фавиконка
 @app.route('/favicon.ico')
 def favicon():
+    """Static route for favicon."""
     return send_from_directory(
         directory=pathlib.Path().absolute(),
         filename='faviconDev.ico'
     )
 
 
-# Редирект с корня на список файлов
 @app.route('/', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def hello():
+    """Redirect for root route."""
     return redirect(url_for('get_file', _external=True))
 
 # ----------------------------------------------------------------------
@@ -270,6 +282,12 @@ def hello():
 @app.route('/files', methods=['GET'])
 @app.route('/files/<path:asked_file_path>', methods=['GET'])
 def get_file(asked_file_path=''):
+    """
+    Get files and directories in json dictionary.
+
+    Method for getting paginated list of objects in directory
+    or returning separate file.
+    """
     try:
         if not os.path.exists(app.config['ROOT_PATH']):
             os.makedirs(app.config['ROOT_PATH'])
@@ -503,26 +521,28 @@ def get_file(asked_file_path=''):
                                     mimetype='application/json'
                                 )
 
-                        originalPath, originalName = os.path.split(original)
-                        if app.config['THUMBNAILS_FOLDER'][0] != '.':
-                            app.config['THUMBNAILS_FOLDER'] = '.'\
-                                + app.config['THUMBNAILS_FOLDER']
-                        app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'] = \
-                            os.path.join(
-                                originalPath,
-                                app.config['THUMBNAILS_FOLDER']
+                        original_relpath = os.path.relpath(
+                            original,
+                            app.config['ROOT_PATH']
                         )
                         thumbnail_link = thumbnail.get_thumbnail(
-                            original,
+                            original_relpath,
                             size=thumbnail_size,
                             crop=thumbnail_crop
                         )
-                        thumbnail_path, thumbnailFilename = os.path.split(
+                        thumbnail_path, thumbnail_filename = os.path.split(
                             thumbnail_link
                         )
+                        original_relpath_path, \
+                            original_relpath_name = os.path.split(
+                                original_relpath
+                            )
                         return send_from_directory(
-                            directory=thumbnail.thumbnail_directory,
-                            filename=thumbnailFilename
+                            directory=os.path.join(
+                                app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'],
+                                original_relpath_path
+                            ),
+                            filename=thumbnail_filename
                         )
                     else:
                         return send_from_directory(
@@ -543,6 +563,11 @@ def get_file(asked_file_path=''):
 @app.route('/files', methods=['DELETE'])
 @app.route('/files/<path:asked_file_path>', methods=['DELETE'])
 def delete_file(asked_file_path=''):
+    """
+    Delete files and directories.
+
+    Method for deleting separate file or directory with recursive option.
+    """
     try:
         file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
 
@@ -591,13 +616,9 @@ def delete_file(asked_file_path=''):
 
                     file_path, fileName = os.path.split(file_real_path)
 
-                    if app.config['THUMBNAILS_FOLDER'][0] != '.':
-                        app.config['THUMBNAILS_FOLDER'] = '.'\
-                            + app.config['THUMBNAILS_FOLDER']
-
                     thumbnail_path = os.path.join(
-                        file_path,
-                        app.config['THUMBNAILS_FOLDER']
+                        app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'],
+                        os.path.relpath(file_path, app.config['ROOT_PATH'])
                     )
 
                     if os.path.exists(thumbnail_path):
@@ -647,6 +668,13 @@ def delete_file(asked_file_path=''):
 @app.route('/files', methods=['POST'])
 @app.route('/files/<path:asked_file_path>', methods=['POST'])
 def post_file(asked_file_path=''):
+    """
+    Post files with directory tree creation.
+
+    Method for posting files in directory with tree creation if directory
+    not exist. Also, if files not sended, check parameter and create empty
+    directory.
+    """
     try:
         uploads = request.files.getlist('uploads')
 
@@ -776,6 +804,7 @@ def post_file(asked_file_path=''):
 @app.route('/files', methods=['PUT'])
 @app.route('/files/<path:asked_file_path>', methods=['PUT'])
 def put_file(asked_file_path=''):
+    """Method for change name of directory or file."""
     try:
         file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
         new_object_name = request.args.get('rename', None)
@@ -808,8 +837,11 @@ def put_file(asked_file_path=''):
 
                 return json_http_response(
                     status=200,
-                    given_message="%s «%s» renamed to «%s» successfully!"\
-                        % (object_type, old_file_name, new_object_name),
+                    given_message="%s «%s» renamed to «%s» successfully!" % (
+                        object_type,
+                        old_file_name,
+                        new_object_name
+                    ),
                     dbg=request.args.get('dbg', False)
                 )
             else:
@@ -817,7 +849,8 @@ def put_file(asked_file_path=''):
         else:
             return json_http_response(
                 status=400,
-                given_message="You didn`t send a new name for file/directory! Request ignored!",
+                given_message="You didn`t send a new name for file/directory!"
+                " Request ignored!",
                 dbg=request.args.get('dbg', False)
             )
     except Exception:
