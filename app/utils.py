@@ -155,14 +155,15 @@ def pagination_of_list(query_result, url, query_params):
 
 
 def add_watermark(
-        path, wm_opacity=1.0, wm_interval=0, wm_size=1.0, wm_angle=45.0
+        path, wm_opacity=0.5, wm_interval=0, wm_size=1.0, wm_angle=45.0,
+        wm_x=None, wm_y=None
 ):
     """Adding watermark to image."""
     # Try to open watermark file, if not - open font and draw phrase
     try:
         watermark = Image.open(app.config['WATERMARK_FILE'])
     except Exception:
-        watermark = Image.new("RGBA", (500, 45), (255, 255, 255, 0))
+        watermark = Image.new("RGBA", (510, 45), (255, 255, 255, 0))
         try:
             font = ImageFont.truetype(app.config['WATERMARK_FONT'], 40)
         except Exception:
@@ -231,10 +232,21 @@ def add_watermark(
                 layer.paste(watermark, (int(x), int(y)), watermark)
             row += 1
     else:
-        place = (
-            int(image.size[0]*0.5)-int(watermark.size[0]*0.5),
-            int(image.size[1]*0.5)-int(watermark.size[1]*0.5)
-        )  # center of image
+        if wm_x is not None or wm_y is not None:
+            if wm_x is not None:
+                if wm_x > image.size[0]-watermark.size[0]:
+                    wm_x = image.size[0]-watermark.size[0]
+            else:
+                wm_x = 0
+            if wm_y is not None:
+                if wm_y > image.size[1]-watermark.size[1]:
+                    wm_y = image.size[1]-watermark.size[1]
+            else:
+                wm_y = 0
+        else:
+            wm_x = int(image.size[0]*0.5)-int(watermark.size[0]*0.5)
+            wm_y = int(image.size[1]*0.5)-int(watermark.size[1]*0.5)
+        place = (wm_x, wm_y)
         layer.paste(watermark, place)
     # layer.paste(watermark, place)
     layer.convert('RGB')

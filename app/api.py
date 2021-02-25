@@ -344,7 +344,7 @@ def get_file(asked_file_path=''):
                             )
                         try:
                             wm_opacity = float(
-                                    request.args.get('wmOpacity', 100.0)
+                                    request.args.get('wmOpacity', 40.0)
                                 )/100
                             if wm_opacity < 0 or wm_opacity > 1:
                                 return json_http_response(
@@ -396,14 +396,38 @@ def get_file(asked_file_path=''):
                                 'parameter is invalid (must be '
                                 'number value)!'
                             )
-                        path = os.path.join(directory, filename)
+                        try:
+                            wm_x = request.args.get('wmX', None)
+                            if wm_x is not None:
+                                wm_x = int(wm_x)
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmX» '
+                                'parameter is invalid (must be '
+                                'integer number value)!'
+                            )
+                        try:
+                            wm_y = request.args.get('wmY', None)
+                            if wm_y is not None:
+                                wm_y = int(wm_y)
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmY» '
+                                'parameter is invalid (must be '
+                                'integer number value)!'
+                            )
+                        image_path = os.path.join(directory, filename)
                         try:
                             marked_image = add_watermark(
-                                    path,
+                                    image_path,
                                     wm_opacity=wm_opacity,
                                     wm_interval=wm_interval,
                                     wm_size=wm_size,
                                     wm_angle=wm_angle,
+                                    wm_x=wm_x,
+                                    wm_y=wm_y
                                 )
                         except Exception as error:
                             return error.args[0]
