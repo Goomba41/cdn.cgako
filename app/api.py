@@ -1,270 +1,28 @@
 """API for handling with files on server."""
 # -*- coding: utf-8 -*-
 
-import hashlib
-import math
 import os
 import pathlib
 import shutil
-import subprocess
-import traceback
 import uuid
-from datetime import datetime
+
+from app import app, thumbnail
 from distutils.util import strtobool
 from operator import itemgetter
-from urllib.parse import urljoin
 
-from flask import Flask, Response, json, redirect, request, \
-    send_from_directory, url_for
+from app.classes import FileSystemObject
+from app.utils import json_http_response, pagination_of_list, add_watermark
 
-from flask_thumbnails import Thumbnail
+from flask import Response, json, redirect, request, \
+    send_from_directory, url_for, send_file
+
 from flask_thumbnails.utils import parse_size
-
-import magic
-
 from werkzeug.utils import secure_filename
-
-app = Flask(__name__)
-
-thumbnail = Thumbnail(app)
-
-app.config.from_object('config')
-
-# ----------------------------------------------------------------------
-
-
-class FileSystemObject:
-    """Class describing files and directories on filesystem as objects."""
-
-    def __init__(self, path):
-        """Class description."""
-        self.path = path
-        self.type = 'directory' if os.path.isdir(self.path) \
-            else magic.from_file(self.path, mime=True)
-        self.name = self.path.rsplit('/', maxsplit=1)[-1]
-        self.link = url_for(
-            '.get_file',
-            asked_file_path=os.path.relpath(
-                self.path,
-                app.config['ROOT_PATH']
-            ),
-            _external=True
-        )
-        self.sizeBytes = int(
-            subprocess.check_output(
-                "du -sb %s | cut -f1" % (self.path),
-                shell=True
-            )
-        ) if os.path.isdir(self.path) else os.stat(self.path).st_size
-        self.sizeFormatted = self.get_file_size(self.sizeBytes)
-        self.created = str(
-            datetime.fromtimestamp(
-                int(os.stat(self.path).st_ctime)
-            )
-        )
-        self.modified = str(
-            datetime.fromtimestamp(
-                int(os.stat(self.path).st_mtime)
-            )
-        )
-        if os.path.isfile(self.path):
-            self.hash = self.file_hash()
-
-    def __repr__(self):
-        """Class representation string."""
-        return "File system object «%s»" % (self.name)
-
-    def get_metadata(self):
-        """Get class data in json dictionary."""
-        returned_dict = {
-            "name": self.name,
-            "path": self.path,
-            "type": self.type,
-            "link": self.link,
-            "sizeBytes": self.sizeBytes,
-            "sizeNumber": self.sizeFormatted['number'],
-            "sizeSuffix": self.sizeFormatted['suffix'],
-            "created": self.created,
-            "modified": self.modified,
-        }
-        if hasattr(self, 'hash'):
-            returned_dict["hash"] = self.hash
-        return returned_dict
-
-    def get_file_size(self, num, suffix='B'):
-        """Get size in json dictionary with auto detecting measure unit."""
-        for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
-            if abs(num) < 1024.0:
-                return {
-                    'number': float("{:.2f}".format(num)),
-                    'suffix': "%s%s" % (unit, suffix)
-                }
-            num /= 1024.0
-        return {
-            'number': float("{:.2f}".format(num)),
-            'suffix': "%s%s" % (num, 'Yi', suffix)
-        }
-
-    def file_hash(self):
-        """Get file hash in sha512."""
-        hash = hashlib.sha512()
-        with open(self.path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash.update(chunk)
-        return hash.hexdigest()
-
-# ----------------------------------------------------------------------
-
-
-# Генерация ответа сервера при ошибке
-def json_http_response(dbg=False, given_message=None, status=500):
-    """
-    Return http response by status and with given message.
-
-    If dbg parameter set - return with traceback
-    """
-    if status in (400, 401, 403, 404, 500):
-        response_type = 'Error'
-        if status == 400:
-            message = 'Bad request!'
-        if status == 401:
-            message = 'Unauthorized!'
-        if status == 403:
-            message = 'Forbidden'
-        if status == 404:
-            message = 'Not found!'
-        if status == 500:
-            message = 'Internal server error!'
-    elif status in (200, 201):
-        response_type = 'Success'
-        if status == 200:
-            message = 'OK!'
-        if status == 201:
-            message = 'Created!'
-    elif status in (304,):
-        response_type = 'Warning'
-        message = 'Not modified!'
-    else:
-        response_type = 'Info'
-        message = 'I don`t know what to say! Probably this is test response?'
-
-    info = {
-        'responseType': response_type,
-        'message': message,
-        'status': status
-    }
-
-    info['message'] = given_message if given_message is not None else message
-
-    if isinstance(dbg, bool):
-        if dbg is True:
-            info['debugInfo'] = traceback.format_exc()
-    else:
-        try:
-            if strtobool(dbg):
-                info['debugInfo'] = traceback.format_exc()
-        except Exception:
-            info['debugInfo'] = "Debugging info is turned off, because " \
-                "incorrect type of value of parameter 'dbg' " \
-                "(should be boolean)"
-
-    return Response(
-        response=json.dumps(info),
-        status=status,
-        mimetype='application/json'
-    )
-
-
-def pagination_of_list(query_result, url, query_params):
-    """
-    Pagination of query results.
-
-    Required parameters:
-    query_result - result of query in json dictionary
-    url - URL API for links generation
-    query_params - parameters, sended with query
-    """
-    start = query_params.get('start', 1)
-    limit = query_params.get('limit', 10)
-
-    query_params_string = ''
-    for i in query_params:
-        if i not in ('start', 'limit'):
-            query_params_string += '&%s=%s' % (
-                i, query_params.get(i).replace(' ', '+')
-            )
-
-    records_count = len(query_result)
-
-    if not isinstance(start, int):
-        try:
-            start = int(start)
-        except ValueError:
-            start = 1
-    elif start < 1:
-        start = 1
-
-    if not isinstance(limit, int):
-        try:
-            limit = int(limit)
-        except ValueError:
-            limit = 10
-    elif limit < 1:
-        limit = 10
-
-    if records_count < start and records_count != 0:
-        start = records_count
-    elif records_count < start and records_count <= 0:
-        start = 1
-
-    response_obj = {}
-    response_obj['start'] = start
-    response_obj['limit'] = limit
-    response_obj['itemsCount'] = records_count
-
-    pages_count = math.ceil(records_count / limit)
-    response_obj['pages'] = pages_count if pages_count > 0 else 1
-
-    # Создаем URL на предыдущую страницу
-    if start == 1:
-        response_obj['previousPage'] = ''
-    else:
-        start_copy = max(1, start - limit)
-        limit_copy = start - 1
-        params = '?start=%d&limit=%d%s' % (
-            start_copy,
-            limit_copy,
-            query_params_string
-        )
-        new_url = urljoin(url,
-                          params)
-        response_obj['previousPage'] = new_url
-
-    # Создаем URL на следующую страницу
-    if start + limit > records_count:
-        response_obj['nextPage'] = ''
-    else:
-        start_copy = start + limit
-        params = '?start=%d&limit=%d%s' % (
-            start_copy,
-            limit,
-            query_params_string
-        )
-        new_url = urljoin(url,
-                          params)
-        response_obj['nextPage'] = new_url
-
-    # Отсеивание результатов запроса
-    response_obj['results'] = query_result[(start - 1):(start - 1 + limit)]
-
-    return response_obj
-
-# ----------------------------------------------------------------------
 
 
 @app.route('/favicon.ico')
 def favicon():
-    """Static route for favicon."""
+    """Get favicon for dev version."""
     return send_from_directory(
         directory=pathlib.Path().absolute(),
         filename='faviconDev.ico'
@@ -455,6 +213,7 @@ def get_file(asked_file_path=''):
                     )
 
                     make_thumbnail = request.args.get('thumbnail', False)
+                    make_watermark = request.args.get('watermark', False)
 
                     if not isinstance(make_thumbnail, bool):
                         try:
@@ -465,7 +224,25 @@ def get_file(asked_file_path=''):
                                     {
                                         'responseType': 'Error',
                                         'status': 400,
-                                        'message': 'Your «makeThumbnail» '
+                                        'message': 'Your «thumbnail» '
+                                        'parameter is invalid (must be '
+                                        'boolean value)!'
+                                    }
+                                ),
+                                status=400,
+                                mimetype='application/json'
+                            )
+
+                    if not isinstance(make_watermark, bool):
+                        try:
+                            make_watermark = strtobool(make_watermark)
+                        except Exception:
+                            return Response(
+                                response=json.dumps(
+                                    {
+                                        'responseType': 'Error',
+                                        'status': 400,
+                                        'message': 'Your «watermark» '
                                         'parameter is invalid (must be '
                                         'boolean value)!'
                                     }
@@ -537,23 +314,107 @@ def get_file(asked_file_path=''):
                             original_relpath_name = os.path.split(
                                 original_relpath
                             )
-                        return send_from_directory(
-                            directory=os.path.join(
-                                app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'],
-                                original_relpath_path
-                            ),
-                            filename=thumbnail_filename
+                        directory = os.path.join(
+                            app.config['THUMBNAIL_MEDIA_THUMBNAIL_ROOT'],
+                            original_relpath_path
                         )
+                        filename = thumbnail_filename
                     else:
-                        return send_from_directory(
-                            directory=app.config['ROOT_PATH'],
-                            filename=asked_file_path
-                        )
-                except IOError:
+                        directory = app.config['ROOT_PATH']
+                        filename = asked_file_path
+
+                    if make_watermark:
+                        try:
+                            wm_interval = int(
+                                    request.args.get('wmInterval', 0)
+                                )
+                            if wm_interval < 0:
+                                return json_http_response(
+                                    status=400,
+                                    given_message='Your «wmInterval» '
+                                    'parameter is invalid (must be '
+                                    '> 0)!'
+                                )
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmOpacity» '
+                                'parameter is invalid (must be '
+                                'integer value)!'
+                            )
+                        try:
+                            wm_opacity = float(
+                                    request.args.get('wmOpacity', 100.0)
+                                )/100
+                            if wm_opacity < 0 or wm_opacity > 1:
+                                return json_http_response(
+                                    status=400,
+                                    given_message='Your «wmOpacity» '
+                                    'parameter is invalid (must be '
+                                    'in 0 to 100 interval)!'
+                                )
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmOpacity» '
+                                'parameter is invalid (must be '
+                                'number value)!'
+                            )
+                        try:
+                            wm_size = float(
+                                    request.args.get('wmSize', 100.0)
+                                )/100
+                            if wm_size <= 0:
+                                return json_http_response(
+                                    status=400,
+                                    given_message='Your «wmSize» '
+                                    'parameter is invalid (must be '
+                                    '> 0)!'
+                                )
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmSize» '
+                                'parameter is invalid (must be '
+                                'number value)!'
+                            )
+                        try:
+                            wm_angle = float(
+                                    request.args.get('wmAngle', 45.0)
+                                )
+                            if wm_angle < 0 or wm_angle > 360:
+                                return json_http_response(
+                                    status=400,
+                                    given_message='Your «wmAngle» '
+                                    'parameter is invalid (must be '
+                                    'in 0 to 360 interval)!'
+                                )
+                        except Exception:
+                            return json_http_response(
+                                status=400,
+                                given_message='Your «wmAngle» '
+                                'parameter is invalid (must be '
+                                'number value)!'
+                            )
+                        path = os.path.join(directory, filename)
+                        try:
+                            marked_image = add_watermark(
+                                    path,
+                                    wm_opacity=wm_opacity,
+                                    wm_interval=wm_interval,
+                                    wm_size=wm_size,
+                                    wm_angle=wm_angle,
+                                )
+                        except Exception as error:
+                            return error.args[0]
+                        return send_file(marked_image, mimetype="image/jpeg")
+
                     return send_from_directory(
-                        directory=app.config['ROOT_PATH'],
-                        filename=asked_file_path
+                        directory=directory,
+                        filename=filename
                     )
+                except IOError as e:
+                    return json_http_response(status=500, given_message=e)
         else:
             return json_http_response(status=404)
     except Exception:
@@ -804,7 +665,7 @@ def post_file(asked_file_path=''):
 @app.route('/files', methods=['PUT'])
 @app.route('/files/<path:asked_file_path>', methods=['PUT'])
 def put_file(asked_file_path=''):
-    """Method for change name of directory or file."""
+    """Change name of directory or file method."""
     try:
         file_real_path = os.path.join(app.config['ROOT_PATH'], asked_file_path)
         new_object_name = request.args.get('rename', None)
@@ -855,6 +716,3 @@ def put_file(asked_file_path=''):
             )
     except Exception:
         return json_http_response(dbg=request.args.get('dbg', False))
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0')
