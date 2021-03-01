@@ -324,78 +324,11 @@ def get_file(asked_file_path=''):
                         filename = asked_file_path
 
                     if make_watermark:
-                        try:
-                            wm_interval = int(
-                                    request.args.get('wmInterval', 0)
-                                )
-                            if wm_interval < 0:
-                                return json_http_response(
-                                    status=400,
-                                    given_message='Your «wmInterval» '
-                                    'parameter is invalid (must be '
-                                    '> 0)!'
-                                )
-                        except Exception:
-                            return json_http_response(
-                                status=400,
-                                given_message='Your «wmOpacity» '
-                                'parameter is invalid (must be '
-                                'integer value)!'
-                            )
-                        try:
-                            wm_opacity = float(
-                                    request.args.get('wmOpacity', 40.0)
-                                )/100
-                            if wm_opacity < 0 or wm_opacity > 1:
-                                return json_http_response(
-                                    status=400,
-                                    given_message='Your «wmOpacity» '
-                                    'parameter is invalid (must be '
-                                    'in 0 to 100 interval)!'
-                                )
-                        except Exception:
-                            return json_http_response(
-                                status=400,
-                                given_message='Your «wmOpacity» '
-                                'parameter is invalid (must be '
-                                'number value)!'
-                            )
-                        try:
-                            wm_size = float(
-                                    request.args.get('wmSize', 100.0)
-                                )/100
-                            if wm_size <= 0:
-                                return json_http_response(
-                                    status=400,
-                                    given_message='Your «wmSize» '
-                                    'parameter is invalid (must be '
-                                    '> 0)!'
-                                )
-                        except Exception:
-                            return json_http_response(
-                                status=400,
-                                given_message='Your «wmSize» '
-                                'parameter is invalid (must be '
-                                'number value)!'
-                            )
-                        try:
-                            wm_angle = float(
-                                    request.args.get('wmAngle', 45.0)
-                                )
-                            if wm_angle < 0 or wm_angle > 360:
-                                return json_http_response(
-                                    status=400,
-                                    given_message='Your «wmAngle» '
-                                    'parameter is invalid (must be '
-                                    'in 0 to 360 interval)!'
-                                )
-                        except Exception:
-                            return json_http_response(
-                                status=400,
-                                given_message='Your «wmAngle» '
-                                'parameter is invalid (must be '
-                                'number value)!'
-                            )
+                        wm_interval = request.args.get('wmInterval', None)
+                        wm_opacity = request.args.get('wmOpacity', 50.0)
+                        wm_size = request.args.get('wmSize', 100.0)
+                        wm_angle = request.args.get('wmAngle', 45.0)
+
                         try:
                             wm_x = request.args.get('wmX', None)
                             if wm_x is not None:
